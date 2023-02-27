@@ -79,6 +79,9 @@ public class DatabaseTransferConsumer implements IDataTransferConsumer<DatabaseC
     private boolean useIsolatedConnection;
     private Boolean oldAutoCommit;
 
+    // Contains raw source document from the producer if its metadata is dynamic (document-based). Used for attribute transforming
+    private Object sourceDocument;
+
     // Used only for non-explicit import
     // In this case consumer will be replaced with explicit consumers during configuration
     private DBSObjectContainer targetObjectContainer;
@@ -295,6 +298,8 @@ public class DatabaseTransferConsumer implements IDataTransferConsumer<DatabaseC
             previewRows = new ArrayList<>();
             executeBatch = new PreviewBatch();
         }
+
+        sourceDocument = null;
     }
 
     private boolean isSkipColumn(DBDAttributeBinding attr) {
@@ -305,6 +310,11 @@ public class DatabaseTransferConsumer implements IDataTransferConsumer<DatabaseC
 
     @Override
     public void fetchRow(DBCSession session, DBCResultSet resultSet) throws DBCException {
+        if (sourceDocument == null && session.getDataSource().getInfo().isDynamicMetadata()) {
+            final DBDAttributeBinding attr = DBUtils.getAttributeBindings(session, getSourceObject(), resultSet.getMeta())[0];
+            sourceDocument = attr.getValueHandler().fetchValueObject(session, resultSet, attr, attr.getOrdinalPosition());
+        }
+
         Object[] rowValues = new Object[targetAttributes.size()];
         for (int i = 0; i < columnMappings.length; i++) {
             ColumnMapping column = columnMappings[i];
@@ -350,9 +360,9 @@ public class DatabaseTransferConsumer implements IDataTransferConsumer<DatabaseC
                     rowValues[column.targetIndex] = column.valueTransformer.transformAttribute(
                         session,
                         rsAttributes,
-                        rowValues,
+                        sourceDocument != null ? new Object[]{sourceDocument} : rowValues,
                         column.sourceAttr,
-                        attrValue,
+                        sourceDocument != null ? sourceDocument : attrValue,
                         column.valueTransformerProperties);
                 } catch (DBException e) {
                     throw new DBCException(
